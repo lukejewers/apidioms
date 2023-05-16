@@ -69,6 +69,12 @@ async def get_idiom(idiom: str, db: Session = Depends(get_session)):
     return result
 
 
+@app.get("/api/random-idiom/")
+async def get_random_idiom(db: Session = Depends(get_session)):
+    statement = "SELECT * FROM Idiom ORDER BY RANDOM() LIMIT 1;"
+    return db.exec(statement).first()
+
+
 @app.get("/api/pos/{pos}")
 async def get_pos(pos: str, db: Session = Depends(get_session)):
     statement = select(Idiom).where(Idiom.part_of_speech == pos)
