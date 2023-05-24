@@ -12,6 +12,8 @@ API comes with 8508 idioms scraped from [wiktionary](https://en.wiktionary.org/w
 - SQLite
 - BeautifulSoup
 - Requests
+- asyncio
+- aiocsv
 
 ## Start
 
