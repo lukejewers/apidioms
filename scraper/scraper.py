@@ -1,119 +1,102 @@
-import os
 import csv
+import os
 import time
-from typing import List, Optional
+from typing import Generator, List, Optional, Tuple
 
 import requests
 from bs4 import BeautifulSoup
 
 from .constants import parts_of_speech
 
-FILE_PATH = os.path.join("data", "idioms-2.csv")
-BASE_URL = "https://en.wiktionary.org/"
-IDIOMS_URL = "https://en.wiktionary.org/wiki/Category:English_idioms"
-HEADERS = ["idiom", "part_of_speech", "word_url"]
 
+class WebScraper:
+    CSV_PATH: str = os.path.join("data", "idioms-2.csv")
+    CSV_HEADERS: List[str] = ["idiom", "part_of_speech", "word_url"]
+    BASE_URL: str = "https://en.wiktionary.org/"
+    IDIOMS_URL: str = "https://en.wiktionary.org/wiki/Category:English_idioms"
+    row_index = 0
 
-def get_url_response(url: str) -> Optional[requests.Response]:
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        return response
-    except requests.exceptions.HTTPError as err:
-        raise SystemExit(err)
+    def run(self):
+        print("starting scraper.")
+        start = time.time()
+        with open(self.CSV_PATH, "w") as f:
+            writer = csv.writer(f)
+            writer.writerow(self.CSV_HEADERS)
+        self.write_rows(self.IDIOMS_URL)
+        end = time.time()
+        print(f"all rows appended.\ncsv saved, time taken: {end - start}s")
 
-
-def get_next_url(url: str) -> Optional[str]:
-    response = get_url_response(url)
-    soup = make_soup(response)
-    try:
-        href = soup.find(string="next page").parent.get("href")
-    except AttributeError:
-        return
-
-    return f"{BASE_URL}{href}"
-
-
-def make_soup(response: requests.Response) -> BeautifulSoup:
-    return BeautifulSoup(response.content, "html.parser")
-
-
-def get_pos(section) -> Optional[List]:
-    for p in parts_of_speech:
-        try:
-            return section.find(id=p).text
-        except AttributeError:
-            pass
-
-
-def get_etymology(section) -> Optional[List]:
-    try:
-        etymology = []
-        etymology_id = section.find(id="Etymology")
-        for etym in etymology_id.parent.next_siblings:
-            if etym.name == "h3":
-                break
-            if etym.text != "\n":
-                etymology.append(etym.text)
-        return etymology
-    except AttributeError:
-        pass
-
-
-def get_definitions(section) -> Optional[List]:
-    try:
-        definition_elements = section.find("ol").find_all("li")
-        return [definition.text for definition in definition_elements]
-    except AttributeError:
-        pass
-
-
-def create_rows(url: str, row_count: int):
-    response = get_url_response(url)
-    soup = make_soup(response)
-    words_section = soup.find("div", class_="mw-category mw-category-columns")
-    if not words_section:
-        print(f"Reached final page: {url}")
-        return
-
-    words_list = words_section.find_all("li")
-    with open(FILE_PATH, "a") as f:
-        writer = csv.writer(f)
-        for word_el in words_list:
-            word = word_el.next.get("title")
-            _word_ = word.replace(" ", "_")
-            word_url = f"https://en.wiktionary.org/wiki/{_word_}#English"
-            response = get_url_response(word_url)
-            soup = make_soup(response)
-            main_section = soup.find("div", class_="mw-parser-output")
-            if part_of_speech := get_pos(main_section):
-                row = [
-                    word,
-                    part_of_speech.lower(),
-                    word_url,
-                ]
+    def write_rows(self, url: str):
+        words_list = self.get_words_list(url)
+        with open(self.CSV_PATH, "a") as f:
+            writer = csv.writer(f)
+            for row in self.generate_row(words_list):
                 writer.writerow(row)
-                row_count += 1
-                print(f"row appended for idiom '{word}' - row_count: {row_count}")
+                self.row_index += 1
+                print(
+                    f"row appended for idiom '{row[0]}' - row_count: {self.row_index}"
+                )
 
-    url = get_next_url(url)
-    return create_rows(url, row_count) if url else None
+        url = self.get_next_url(url)
+        return self.write_rows(url) if url else None
 
-def main():
-    print("starting scraper.")
-    start = time.time()
-    url = IDIOMS_URL
-    row_count = 0
-    with open(FILE_PATH, "w") as f:
-        writer = csv.writer(f)
-        writer.writerow(HEADERS)
+    def generate_row(
+        self, words_list: Optional[List[BeautifulSoup]]
+    ) -> Generator[Tuple, None, None]:
+        if not words_list:
+            raise Exception("Error: words_list is None")
 
-    create_rows(url, row_count)
-    print("all rows appended.")
-    print("csv saved.")
-    end = time.time()
-    print(f"time taken: {end - start}s")
+        for word_el in words_list:
+            word = word_el.next.get("title")  # type: ignore
+            word_underscores = word.replace(" ", "_")  # type: ignore
+            word_url = f"https://en.wiktionary.org/wiki/{word_underscores}#English"
+            soup = self.make_soup(word_url)
+            main_section = soup.find("div", class_="mw-parser-output")
+            if part_of_speech := self.get_pos(main_section):
+                yield (
+                    word,
+                    part_of_speech.lower(),  # type: ignore
+                    word_url,
+                )
+
+    def get_url_response(self, url: str) -> Optional[requests.Response]:
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+            return response
+        except requests.exceptions.HTTPError as err:
+            raise SystemExit(err)
+
+    def get_next_url(self, url: str) -> str:
+        soup = self.make_soup(url)
+        try:
+            href = soup.find(string="next page").parent.get("href")  # type: ignore
+        except AttributeError as e:
+            raise Exception(f"Error: Cannot find next url %s", e)
+
+        return f"{self.BASE_URL}{href}"
+
+    def make_soup(self, url) -> BeautifulSoup:
+        if not (response := self.get_url_response(url)):
+            raise Exception("Error: Response should not be None")
+        return BeautifulSoup(response.content, "html.parser")
+
+    def get_pos(self, section) -> Optional[List]:
+        for p in parts_of_speech:
+            try:
+                return section.find(id=p).text
+            except AttributeError:
+                pass
+
+    def get_words_list(self, url: str) -> Optional[List[BeautifulSoup]]:
+        soup = self.make_soup(url)
+        words_section = soup.find("div", class_="mw-category mw-category-columns")
+        if not words_section:
+            print(f"Reached final page: {url}")
+            return
+        return words_section.find_all("li")  # type: ignore
 
 
 if __name__ == "__main__":
-    main()
+    webscraper = WebScraper()
+    webscraper.run()
