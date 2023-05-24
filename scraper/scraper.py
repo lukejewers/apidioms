@@ -1,9 +1,12 @@
+import asyncio
 import csv
 import os
 import time
 from typing import Generator, List, Optional, Tuple
 
+import aiofiles
 import requests
+from aiocsv.writers import AsyncWriter
 from bs4 import BeautifulSoup
 
 from .constants import parts_of_speech
@@ -14,7 +17,10 @@ class WebScraper:
     CSV_HEADERS: List[str] = ["idiom", "part_of_speech", "word_url"]
     BASE_URL: str = "https://en.wiktionary.org/"
     IDIOMS_URL: str = "https://en.wiktionary.org/wiki/Category:English_idioms"
-    row_index = 0
+
+    def __init__(self):
+        self.loop = asyncio.get_event_loop()
+        self.row_index = 0
 
     def run(self):
         print("starting scraper.")
@@ -22,23 +28,25 @@ class WebScraper:
         with open(self.CSV_PATH, "w") as f:
             writer = csv.writer(f)
             writer.writerow(self.CSV_HEADERS)
-        self.write_rows(self.IDIOMS_URL)
+        self.loop.run_until_complete(self.write_rows(self.IDIOMS_URL))
         end = time.time()
         print(f"all rows appended.\ncsv saved, time taken: {end - start}s")
 
-    def write_rows(self, url: str):
+    async def write_rows(self, url: str):
         words_list = self.get_words_list(url)
-        with open(self.CSV_PATH, "a") as f:
-            writer = csv.writer(f)
+        async with aiofiles.open(
+            self.CSV_PATH, mode="a", encoding="utf-8", newline=""
+        ) as afp:
+            writer = AsyncWriter(afp, dialect="unix")
             for row in self.generate_row(words_list):
-                writer.writerow(row)
+                await writer.writerow(row)
                 self.row_index += 1
                 print(
                     f"row appended for idiom '{row[0]}' - row_count: {self.row_index}"
                 )
 
         url = self.get_next_url(url)
-        return self.write_rows(url) if url else None
+        return await self.write_rows(url) if url else None
 
     def generate_row(
         self, words_list: Optional[List[BeautifulSoup]]
